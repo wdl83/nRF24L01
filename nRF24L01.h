@@ -26,7 +26,7 @@ typedef uint8_t nRF24L01_spi_cmd_t;
 #define nRF24L01_ADDR_rf_setup    0x06
 #define nRF24L01_ADDR_status      0x07
 #define nRF24L01_ADDR_observe_tx  0x08
-#define nRF24L01_ADDR_cd          0x09
+#define nRF24L01_ADDR_rpd         0x09
 #define nRF24L01_ADDR_rx_addr_p0  0x0A
 #define nRF24L01_ADDR_rx_addr_p1  0x0B
 #define nRF24L01_ADDR_rx_addr_p2  0x0C
@@ -69,13 +69,13 @@ typedef union
     struct
     {
         // enable auto acknowledgement
-        uint8_t ENAA_P0 : 1;
-        uint8_t ENAA_P1 : 1;
-        uint8_t ENAA_P2 : 1;
-        uint8_t ENAA_P3 : 1;
-        uint8_t ENAA_P4 : 1;
-        uint8_t ENAA_P5 : 1;
-        uint8_t : 2; // MSB
+        uint8_t ENAA_P0 : 1;                                          //  1 @PoR
+        uint8_t ENAA_P1 : 1;                                          //  1 @PoR
+        uint8_t ENAA_P2 : 1;                                          //  1 @PoR
+        uint8_t ENAA_P3 : 1;                                          //  1 @PoR
+        uint8_t ENAA_P4 : 1;                                          //  1 @PoR
+        uint8_t ENAA_P5 : 1;                                          //  1 @PoR
+        uint8_t : 2; // MSB                                           // 00 @PoR
     };
     uint8_t value;
     uint8_t byte[0];
@@ -85,13 +85,13 @@ typedef union
 {
     struct
     {
-        uint8_t ERX_P0 : 1;
-        uint8_t ERX_P1 : 1;
-        uint8_t ERX_P2 : 1;
-        uint8_t ERX_P3 : 1;
-        uint8_t ERX_P4 : 1;
-        uint8_t ERX_P5 : 1;
-        uint8_t : 2; // MSB
+        uint8_t ERX_P0 : 1; // enable data pipe N                     //  1 @PoR
+        uint8_t ERX_P1 : 1;                                           //  1 @PoR
+        uint8_t ERX_P2 : 1;                                           //  0 @PoR
+        uint8_t ERX_P3 : 1;                                           //  0 @PoR
+        uint8_t ERX_P4 : 1;                                           //  0 @PoR
+        uint8_t ERX_P5 : 1;                                           //  0 @PoR
+        uint8_t : 2; // MSB                                           // 00 @PoR
     };
     uint8_t value;
     uint8_t byte[0];
@@ -112,8 +112,8 @@ typedef union
 {
     struct
     {
-        uint8_t ARC : 4; // Auto Retransmit Count [0-15]
-        uint8_t ARD : 4;  // MSB, Auto Re-transmit Delay
+        uint8_t ARC : 4; // Auto Retransmit Count [0-15]            // 0011 @PoR
+        uint8_t ARD : 4;  // MSB, Auto Re-transmit Delay            // 0000 @PoR
     };
     uint8_t value;
     uint8_t byte[0];
@@ -123,7 +123,7 @@ typedef union
 {
     struct
     {
-        uint8_t RF_CH : 7; // RF channel [0:127]
+        uint8_t RF_CH : 7; // RF channel [0:127]                 // 0000010 @PoR
         uint8_t : 1; // MSB
     };
     uint8_t value;
@@ -134,11 +134,13 @@ typedef union
 {
     struct
     {
-        uint8_t LNA_HCURR : 1; // Setup LNA gain
-        uint8_t RF_PWR : 2; // RF TX output power [0: 18, 1: 12, 2: 6, 3: 0]dBm
-        uint8_t RF_DR : 1; // Data Rate, 1: 2Mbps, 0: 1Mbps
-        uint8_t PLL_LOCK : 1; // Force PLL lock signal (test only)
-        uint8_t : 3; // MSB
+        uint8_t : 1;
+        uint8_t RF_PWR : 2; // TX power [0: 18, 1: 12, 2: 6, 3: 0]dBm // 11 @PoR
+        uint8_t RF_DR_HIGH : 1; // Data Rate, 1: 2Mbps, 0: 1Mbps      //  1 @PoR
+        uint8_t PLL_LOCK : 1; // Force PLL lock signal (test only)    //  0 @PoR
+        uint8_t RF_DR_LOW: 1; // RF data rate 250kbps                 //  0 @PoR
+        uint8_t : 1;                                                  //  0 @PoR
+        uint8_t CONT_WAVE : 1; // enable continuous carrier transmit  //  0 @PoR
     };
     uint8_t value;
     uint8_t byte[0];
@@ -163,8 +165,8 @@ typedef union
 {
     struct
     {
-        uint8_t ARC_CNT : 4; // resent packets count
-        uint8_t PLOS_CNT : 4; // MSB, lost packets count
+        uint8_t ARC_CNT : 4; // resent packets count                   // 0 @PoR
+        uint8_t PLOS_CNT : 4; // MSB, lost packets count               // 0 @PoR
     };
     uint8_t value;
     uint8_t byte[0];
@@ -174,12 +176,12 @@ typedef union
 {
     struct
     {
-        uint8_t CD : 1; // carrier detect
+        uint8_t RPD : 1; // carrier detect                             // 0 @PoR
         uint8_t : 7; // MSB
     };
     uint8_t value;
     uint8_t byte[0];
-} nRF24L01_cd_t;
+} nRF24L01_rpd_t;
 
 typedef union
 {
@@ -224,12 +226,12 @@ typedef union
 {
     struct
     {
-        uint8_t RX_EMPTY : 1;
-        uint8_t RX_FULL : 1;
+        uint8_t RX_EMPTY : 1;                                          // 1 @PoR
+        uint8_t RX_FULL : 1;                                           // 0 @PoR
         uint8_t : 2;
-        uint8_t TX_EMPTY : 1;
-        uint8_t TX_FULL : 1;
-        uint8_t TX_REUSE : 1; // reuse last sent data packet
+        uint8_t TX_EMPTY : 1;                                          // 1 @PoR
+        uint8_t TX_FULL : 1;                                           // 0 @PoR
+        uint8_t TX_REUSE : 1; // reuse last sent data packet           // 0 @PoR
         uint8_t : 1; // MSB
     };
     uint8_t value;
@@ -265,6 +267,8 @@ void (*nRF24L01_recv_cb_t)(uint8_t *curr, uint8_t pipe_no, uintptr_t);
 typedef
 void (*nRF24L01_send_cb_t)(uintptr_t);
 typedef
+void (*nRF24L01_send_err_cb_t)(nRF24L01_status_t, nRF24L01_fifo_status_t, uintptr_t);
+typedef
 void (*nRF24L01_spi_xchg_t)(uint8_t *begin, const uint8_t *const end);
 typedef
 void (*nRF24L01_ce_set_t)(nRF24L01_ce_t);
@@ -278,7 +282,7 @@ typedef struct
         const uint8_t *begin;
         const uint8_t *end;
         nRF24L01_send_cb_t cb;
-        nRF24L01_send_cb_t err_cb;
+        nRF24L01_send_err_cb_t err_cb;
         uintptr_t user_data;
     } tx;
     struct
@@ -323,6 +327,7 @@ void nRF24L01_send(
     nRF24L01_t *,
     const uint8_t *begin, const uint8_t *const end,
     nRF24L01_send_cb_t,
+    nRF24L01_send_err_cb_t,
     uintptr_t user_data);
 
 void nRF24L01_recv(
@@ -330,3 +335,5 @@ void nRF24L01_recv(
     uint8_t *begin, const uint8_t *const end,
     nRF24L01_recv_cb_t,
     uintptr_t user_data);
+
+void nRF24L01_dump(nRF24L01_t *);

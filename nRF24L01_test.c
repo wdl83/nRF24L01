@@ -1,13 +1,24 @@
+#include <string.h>
+#include <stdio.h>
+
 #include <avr/interrupt.h>
 #include <avr/sleep.h>
 
+#include <drv/spi0.h>
+#include <drv/usart0.h>
+#include <drv/watchdog.h>
+
+#include <bootloader/fixed.h>
+
 #include "nRF24L01.h"
 
-#include "drv/spi0.h"
-
-// nRFIRQ   PC.2/PCINT10 (A2 pro-mini)
-// nRFCE    PC.1/PCINT9 (A1 pro-mini)
-// RLYCTL   PC.0/PCINT8 (A0 pro-mini)
+// nRF IRQ      PC.2/PCINT10       pin: A2 pro-mini
+// nRF CE       PC.1/PCINT9        pin: A1 pro-mini
+// RLY CTL      PC.0/PCINT8        pin: A0 pro-mini
+// SPI0 SCK     PB.5/PCINT5        pin: 13 pro-mini
+// SPI0 MISO    PB.4/PCINT4        pin: 12 pro-mini
+// SPI0 MOSI    PB.3/PCINT3        pin: 11 pro-mini
+// SPI0 !SS     PB.2/PCINT2        pin: 10 pro-mini
 
 static
 void spi_chip_select_on(void)
@@ -17,18 +28,13 @@ void spi_chip_select_on(void)
      * 2) SCK is LOW when idle (default on POR)
      * 3) CSN is HIGH when idle (!SS default on POR)
      * */
-    // switch SPI0 PB.2/!SS (10 pro-mini) to output
-    DDRB |= M1(DDB2);
-    // 4MHz CLK
-    SPI0_CLK_DIV_4();
-    //SPI0_CLK_x2(); // 4MHz x2 = 8MHz
+    PORTB &= ~M1(DDB2); // SPI0/!SS PB.2 low
 }
 
 static
 void spi_chip_select_off(void)
 {
-    /* switch SPI0 PB.2/!SS (10 pro-mini) to input */
-    DDRB &= ~M1(DDB2);
+    PORTB |= M1(DDB2); /* SPI0/!SS PB.2 high */
 }
 
 static
@@ -49,24 +55,34 @@ void ce_set(nRF24L01_ce_t state)
 static
 void init(nRF24L01_t *dev)
 {
-    { /* PC.1/nRFCE (A1 pro-mini) */
-        DDRC |= M1(DDC1); // to output
-        PORTC &= ~M1(DDC1); // to low
-    }
+    /* PC.1 / nRF CE */
+    PORTC &= ~M1(DDC1); // to low
+    DDRC |= M1(DDC1); // to output
 
-    { // PC.2/nRFIRQ (A2 pro-mini)
-        DDRC &= ~M1(DDC2); // to input
-    }
+    // PC.2 / nRF IRQ
+    DDRC &= ~M1(DDC2); // to input
+    PORTC |= M1(PORTC2); // pull-up
+    // PC.2 / nRF IRQ pin-change interrupt enable (PCINT10)
+    PCICR |= M1(PCIE1);
+    PCMSK1 |= M1(PCINT10);
 
-    { // PC.2/nRFIRQ pin-change interrupt (PCINT10)
-        PCICR |= M1(PCIE1);
-        PCMSK1 |= ~M1(PCINT10);
-    }
+    // PB.2 / SPI0 !SS
+    DDRB |= M1(DDB2); // output
+    PORTB &= ~M1(DDB2); // low
+
+    // PB.3 / SPI0 MOSI
+    PORTB |= M1(DDB3); // output
+    DDRB |= M1(DDB3); // high
+
+    // PB.5 / SPI0/CLK
+    PORTB |= M1(DDB5); // output
+    DDRB |= M1(DDB5); // high
 
     SPI0_MASTER();
+    SPI0_CLK_DIV_16(); // 1MHz
     SPI0_ENABLE();
 
-    nRF24L01_init(dev,  ce_set, spi_xchg);
+    nRF24L01_init(dev, ce_set, spi_xchg);
 
     /* TX, 1B CRC, CRC enabled, interrupts not masked */
     nRF24L01_CFG(dev, config, .PRIM_RX = 0, .PWR_UP = 1, .CRCO = 0, .EN_CRC = 1, .MASK_MAX_RT = 0, .MASK_TX_DS = 0, .MASK_RX_DR = 0); // @PoR
@@ -81,7 +97,7 @@ void init(nRF24L01_t *dev)
     /* channel 2 */
     nRF24L01_CFG(dev, rf_ch, .RF_CH = 2); // @PoR
     /* 0dBm, 2Mbps */
-    nRF24L01_CFG(dev, rf_setup, .RF_PWR = 3, .RF_DR = 1); // @PoR
+    nRF24L01_CFG(dev, rf_setup, .RF_PWR = 3, .RF_DR_LOW = 1); // @PoR
     nRF24L01_CFG(dev, rx_addr_p0, .addr = {0xE7, 0xE7, 0xE7, 0xE7, 0xE7}); // @PoR
     nRF24L01_CFG(dev, rx_addr_p1, .addr = {0xC2, 0xC2, 0xC2, 0xC2, 0xC2}); // @PoR
     nRF24L01_CFG(dev, rx_addr_p2, .addr = 0xC3); // @PoR
@@ -92,43 +108,79 @@ void init(nRF24L01_t *dev)
 }
 
 static
-void mask_irq(void)
+void broadcast(uintptr_t);
+
+static
+void on_send_error(
+    nRF24L01_status_t status,
+    nRF24L01_fifo_status_t fifo_status,
+    uintptr_t user_data)
 {
-    // mask nRFIRQ, until nRF request is serviced by nRF24L01_irq routine
-    if(PCIFR & M1(PCIF1)) PCMSK1 |= M1(PCINT10);
+    if(!user_data) return;
+    //nRF24L01_t *dev = (nRF24L01_t *)user_data;
+
+    if(status.MAX_RT)
+    {
+        broadcast(user_data);
+    }
 }
 
 static
-void unmask_irq(void)
+void broadcast(uintptr_t user_data)
 {
-    // by now IRQ should be cleared by nRF, unmask pin-change ISR
-    if(PCMSK1 & M1(PCINT10)) PCMSK1 &= ~M1(PCINT10);
+    if(!user_data) return;
+
+    nRF24L01_t *dev = (nRF24L01_t *)user_data;
+    const char *message = "hello from nRF24L01\r\n";
+
+    //usart0_send_str("broadcast\r\n");
+    nRF24L01_send(
+        dev,
+        (const uint8_t *)message, (const uint8_t *)(message + 21),
+        broadcast,
+        on_send_error,
+        user_data);
 }
 
 
 __attribute__((noreturn))
 void main(void)
 {
+    /* watchdog is enabled by bootloader whenever it "jumps" to app code */
+    fixed__.app_reset_code.curr = RESET_CODE_APP_IDLE;
+    watchdog_disable();
+    //watchdog_enable(WATCHDOG_TIMEOUT_1000ms);
+
     nRF24L01_t dev;
+
+    USART0_BR(CALC_BR(CPU_CLK, 19200));
+    USART0_PARITY_EVEN();
+    USART0_TX_ENABLE();
 
     init(&dev);
     /* set SMCR SE (Sleep Enable bit) */
     sleep_enable();
 
+    broadcast((uintptr_t)&dev);
+
     for(;;)
     {
         cli();
         {
-            dev.updated = (PCMSK1 & M1(PCINT10)) && (PINC & M1(PINC2));
-            nRF24L01_event(&dev);
-            unmask_irq();
+            usart0_send_str("loop\r\n");
+
+            /* TODO: do event dispatch once per main event loop
+             * provide periodic timer, for now dispatch all events to avoid
+             * missing some */
+            while(0 == (PINC & M1(PINC2)))
+            {
+                dev.updated = 1;
+                nRF24L01_event(&dev);
+            }
         }
         sei();
         sleep_cpu();
     }
 }
 
-ISR(PCINT2_vect)
-{
-    mask_irq();
-}
+ISR(PCINT1_vect) {}

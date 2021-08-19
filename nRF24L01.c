@@ -16,17 +16,70 @@ typedef struct
 #define MAX_DATA_SIZE (PAYLOAD_SIZE - sizeof(header_t))
 #define PADDING_BYTE UINT8_C(0xCD)
 
+
 static
 void tx_reset(nRF24L01_t *dev)
 {
-    // TODO
+    {
+        uint8_t wdata[] =
+        {
+            nRF24L01_FLUSH_TX
+        };
+        dev->spi_xchg(wdata, wdata + sizeof(wdata));
+    }
+    {
+        uint8_t wdata[] =
+        {
+            nRF24L01_W_REGISTER(nRF24L01_ADDR_status),
+            (nRF24L01_status_t){.MAX_RT = 1, .TX_DS = 1}.value,
+        };
+        dev->spi_xchg(wdata, wdata + sizeof(wdata));
+    }
+}
+
+static
+void on_transmission_error(
+    nRF24L01_t *dev,
+    nRF24L01_status_t status,
+    nRF24L01_fifo_status_t fifo_status)
+{
+    tx_reset(dev);
+    if(dev->tx.err_cb) (*dev->tx.err_cb)(status, fifo_status, dev->tx.user_data);
 }
 
 static
 void write_payload(nRF24L01_t *dev)
 {
-    if(dev->tx.end == dev->tx.begin) goto exit;
+    /* write payload, must be written in continuously ~ one spi_xchg call */
+    const size_t size = dev->tx.end - dev->tx.begin;
+    const uint8_t data_size = size >= MAX_DATA_SIZE ? MAX_DATA_SIZE : size;
+    union {
+        struct {
+            union {
+                nRF24L01_status_t status;
+                nRF24L01_spi_cmd_t cmd;
+            };
+            union {
+                header_t header;
+                uint8_t data[MAX_DATA_SIZE];
+            };
+        };
+        uint8_t byte[0];
+    } xdata =
+    {
+        .cmd = nRF24L01_W_TX_PAYLOAD,
+        .header.data_size = data_size
+    };
 
+    memcpy(xdata.data, dev->tx.begin, data_size);
+    memset(xdata.data + data_size, PADDING_BYTE, MAX_DATA_SIZE - data_size);
+    dev->tx.begin += data_size;
+    dev->spi_xchg(xdata.byte, xdata.byte + sizeof(xdata));
+}
+
+static
+void send(nRF24L01_t *dev)
+{
     { /* check last transmission status */
         union {
             struct {
@@ -43,11 +96,15 @@ void write_payload(nRF24L01_t *dev)
 
         dev->spi_xchg(xdata.byte, xdata.byte + sizeof(xdata));
 
-        if(xdata.status.MAX_RT) goto transmission_error;
+        if(xdata.status.MAX_RT)
+        {
+            on_transmission_error(dev, xdata.status, xdata.fifo_status);
+            goto exit;
+        }
         if(xdata.status.TX_FULL) goto exit;
         if(!xdata.status.TX_DS && !xdata.fifo_status.TX_EMPTY) goto exit;
 
-        /* clear TX_DS */
+        /* clear data sent, TX FIFO interrupt */
         if(xdata.status.TX_DS)
         {
             uint8_t wdata[] =
@@ -62,41 +119,11 @@ void write_payload(nRF24L01_t *dev)
         if(dev->tx.begin == dev->tx.end) goto transmission_complete;
     }
 
-    { /* write payload, must be written in continuously ~ one spi_xchg call */
-        const size_t size = dev->tx.end - dev->tx.begin;
-        const uint8_t data_size = size >= MAX_DATA_SIZE ? MAX_DATA_SIZE : size;
-        union {
-            struct {
-                union {
-                    nRF24L01_status_t status;
-                    nRF24L01_spi_cmd_t cmd;
-                };
-                union {
-                    header_t header;
-                    uint8_t data[MAX_DATA_SIZE];
-                };
-            };
-            uint8_t byte[0];
-        } xdata =
-        {
-            .cmd = nRF24L01_W_TX_PAYLOAD,
-            .header.data_size = data_size
-        };
+    if(dev->tx.end == dev->tx.begin) goto exit;
 
-        memcpy(xdata.data, dev->tx.begin, data_size);
-        memset(xdata.data + data_size, PADDING_BYTE, MAX_DATA_SIZE - data_size);
-        dev->tx.begin += data_size;
-        dev->spi_xchg(xdata.byte, xdata.byte + sizeof(xdata));
-        goto exit;
-    }
-transmission_error:
-    {
-        tx_reset(dev);
-        if(dev->tx.err_cb) (*dev->tx.err_cb)(dev->tx.user_data);
-        dev->tx.begin = NULL;
-        dev->tx.end = NULL;
-        goto exit;
-    }
+    write_payload(dev);
+    goto exit;
+
 transmission_complete:
     {
         if(dev->tx.cb) (*dev->tx.cb)(dev->tx.user_data);
@@ -176,7 +203,6 @@ void nRF24L01_init(
             spi_xchg(wdata, wdata + sizeof(wdata));
         } while(pipe_num);
     }
-
 }
 
 void nRF24L01_event(nRF24L01_t *dev)
@@ -193,20 +219,24 @@ void nRF24L01_event(nRF24L01_t *dev)
         uint8_t byte[0];
     } xdata = {.cmd = nRF24L01_R_REGISTER(nRF24L01_ADDR_config)};
 
+    dev->spi_xchg(xdata.byte, xdata.byte + sizeof(xdata));
+
     if(xdata.config.PRIM_RX) read_payload(dev);
-    else write_payload(dev);
+    else send(dev);
 }
 
 void nRF24L01_send(
     nRF24L01_t *dev,
     const uint8_t *begin, const uint8_t *const end,
     nRF24L01_send_cb_t cb,
+    nRF24L01_send_err_cb_t err_cb,
     uintptr_t user_data)
 {
     dev->tx.begin = begin;
     dev->tx.end = end;
     dev->tx.cb = cb;
-    dev->rx.user_data = user_data;
+    dev->tx.err_cb = err_cb;
+    dev->tx.user_data = user_data;
 
     { /* set to PRIM_TX if needed */
         union {
