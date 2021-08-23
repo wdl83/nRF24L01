@@ -14,7 +14,7 @@ void nRF24L01_dump(nRF24L01_t *dev)
         "1100", "1101", "1110", "1111"
     };
 
-    uint8_t regs[] =
+    uint8_t addr[] =
     {
         nRF24L01_ADDR_config,
         nRF24L01_ADDR_en_aa,
@@ -35,25 +35,27 @@ void nRF24L01_dump(nRF24L01_t *dev)
         nRF24L01_ADDR_fifo_status
     };
 
-    for(uint8_t i = 0; i < sizeof(regs); ++i)
+    uint8_t reg[sizeof(addr)];
+
+    for(uint8_t i = 0; i < sizeof(addr); ++i)
     {
         uint8_t xdata[] =
         {
-            nRF24L01_R_REGISTER(i),
+            nRF24L01_R_REGISTER(addr[i]),
             nRF24L01_NOP
         };
 
         dev->spi_xchg(xdata, xdata + sizeof(xdata));
-        regs[i] = xdata[1];
+        reg[i] = xdata[1];
     }
 
-    for(uint8_t i = 0; i < sizeof(regs); ++i)
+    for(uint8_t i = 0; i < sizeof(addr); ++i)
     {
         char str[16];
-        sprintf(str, "[%" PRIu8 "]%" PRIx8 " ", i, regs[i]);
+        sprintf(str, "[%" PRIx8 "] 0x%" PRIx8 " ", addr[i], reg[i]);
         usart0_send_str(str);
-        usart0_send_str(lookup[(regs[i] >> 4) & 0xF]);
-        usart0_send_str(lookup[regs[i] & 0xF]);
+        usart0_send_str(lookup[(reg[i] >> 4) & 0xF]);
+        usart0_send_str(lookup[reg[i] & 0xF]);
         usart0_send_str("\r\n");
     }
 }

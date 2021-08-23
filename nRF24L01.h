@@ -250,6 +250,8 @@ typedef union
 
 #define nRF24L01_PAYLOAD_SIZE (sizeof(nRF24L01_payload_t))
 #define nRF24L01_RX_PIPE_NUM 6
+#define nRF24L01_RX_PIPE_INVALID 6
+#define nRF24L01_RX_FIFO_EMPTY 6
 
 typedef union
 {
@@ -267,7 +269,7 @@ void (*nRF24L01_recv_cb_t)(uint8_t *curr, uint8_t pipe_no, uintptr_t);
 typedef
 void (*nRF24L01_send_cb_t)(uintptr_t);
 typedef
-void (*nRF24L01_send_err_cb_t)(nRF24L01_status_t, nRF24L01_fifo_status_t, uintptr_t);
+void (*nRF24L01_err_cb_t)(nRF24L01_status_t, nRF24L01_fifo_status_t, uintptr_t);
 typedef
 void (*nRF24L01_spi_xchg_t)(uint8_t *begin, const uint8_t *const end);
 typedef
@@ -282,7 +284,7 @@ typedef struct
         const uint8_t *begin;
         const uint8_t *end;
         nRF24L01_send_cb_t cb;
-        nRF24L01_send_err_cb_t err_cb;
+        nRF24L01_err_cb_t err_cb;
         uintptr_t user_data;
     } tx;
     struct
@@ -290,6 +292,7 @@ typedef struct
         uint8_t *begin;
         const uint8_t *end;
         nRF24L01_recv_cb_t cb;
+        nRF24L01_err_cb_t err_cb;
         uintptr_t user_data;
     } rx;
     struct
@@ -313,12 +316,12 @@ void nRF24L01_init(
                 nRF24L01_##tag##_t data; \
             }; \
             uint8_t byte[0]; \
-        } xdata = \
+        } xdata__ = \
         { \
             .cmd = nRF24L01_W_REGISTER(nRF24L01_ADDR_##tag), \
             .data = {__VA_ARGS__} \
         }; \
-        (dev)->spi_xchg(xdata.byte, xdata.byte + sizeof(xdata)); \
+        (dev)->spi_xchg(xdata__.byte, xdata__.byte + sizeof(xdata__)); \
     }
 
 void nRF24L01_event(nRF24L01_t *);
@@ -327,13 +330,16 @@ void nRF24L01_send(
     nRF24L01_t *,
     const uint8_t *begin, const uint8_t *const end,
     nRF24L01_send_cb_t,
-    nRF24L01_send_err_cb_t,
+    nRF24L01_err_cb_t,
     uintptr_t user_data);
 
 void nRF24L01_recv(
     nRF24L01_t *,
     uint8_t *begin, const uint8_t *const end,
     nRF24L01_recv_cb_t,
+    nRF24L01_err_cb_t,
     uintptr_t user_data);
+
+nRF24L01_rpd_t nRF24L01_rpd(nRF24L01_t *);
 
 void nRF24L01_dump(nRF24L01_t *);

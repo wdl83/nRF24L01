@@ -10,6 +10,7 @@
 
 #include <bootloader/fixed.h>
 
+#include "cyclic_timer.h"
 #include "nRF24L01.h"
 
 // nRF IRQ      PC.2/PCINT10       pin: A2 pro-mini
@@ -84,31 +85,72 @@ void init(nRF24L01_t *dev)
 
     nRF24L01_init(dev, ce_set, spi_xchg);
 
-    /* TX, 1B CRC, CRC enabled, interrupts not masked */
-    nRF24L01_CFG(dev, config, .PRIM_RX = 0, .PWR_UP = 1, .CRCO = 0, .EN_CRC = 1, .MASK_MAX_RT = 0, .MASK_TX_DS = 0, .MASK_RX_DR = 0); // @PoR
+    /* TX, 1B CRC, CRC disabled, interrupts not masked */
+    nRF24L01_CFG(
+        dev, config,
+        .PRIM_RX = 0,
+        .PWR_UP = 1,
+        .CRCO = 0,
+        .EN_CRC = 0,
+        .MASK_MAX_RT = 0,
+        .MASK_TX_DS = 0,
+        .MASK_RX_DR = 0);
+
     /* enable auto ACK for data pipe 0/1/2/3/4/5 */
-    nRF24L01_CFG(dev, en_aa, .ENAA_P0 = 1, .ENAA_P1 = 1, .ENAA_P2 = 1, .ENAA_P3 = 0, .ENAA_P4 = 1, .ENAA_P5 = 1); // @PoR
-    /* enable data pipe 0/1 */
-    nRF24L01_CFG(dev, en_rxaddr, .ERX_P0 = 1, .ERX_P1 = 1); // @PoR
+    nRF24L01_CFG(
+        dev, en_aa,
+        .ENAA_P0 = 0,
+        .ENAA_P1 = 0,
+        .ENAA_P2 = 0,
+        .ENAA_P3 = 0,
+        .ENAA_P4 = 0,
+        .ENAA_P5 = 0);
+
+    /* enable data pipe 0 */
+    nRF24L01_CFG(
+        dev, en_rxaddr,
+        .ERX_P0 = 0,
+        .ERX_P2 = 0,
+        .ERX_P3 = 0,
+        .ERX_P4 = 0,
+        .ERX_P5 = 0);
+
     /* adress width 5B */
-    nRF24L01_CFG(dev, setup_aw, .AW = 3); // @PoR
+    nRF24L01_CFG(
+        dev, setup_aw,
+        .AW = 3);
+
     /* auto re-transmit count 3, auto re-transmit delay 250+86us */
-    nRF24L01_CFG(dev, setup_retr, .ARC = 3, .ARD = 0); // @PoR
-    /* channel 2 */
-    nRF24L01_CFG(dev, rf_ch, .RF_CH = 2); // @PoR
-    /* 0dBm, 2Mbps */
-    nRF24L01_CFG(dev, rf_setup, .RF_PWR = 3, .RF_DR_LOW = 1); // @PoR
-    nRF24L01_CFG(dev, rx_addr_p0, .addr = {0xE7, 0xE7, 0xE7, 0xE7, 0xE7}); // @PoR
-    nRF24L01_CFG(dev, rx_addr_p1, .addr = {0xC2, 0xC2, 0xC2, 0xC2, 0xC2}); // @PoR
-    nRF24L01_CFG(dev, rx_addr_p2, .addr = 0xC3); // @PoR
-    nRF24L01_CFG(dev, rx_addr_p3, .addr = 0xC4); // @PoR
-    nRF24L01_CFG(dev, rx_addr_p4, .addr = 0xC5); // @PoR
-    nRF24L01_CFG(dev, rx_addr_p5, .addr = 0xC6); // @PoR
-    nRF24L01_CFG(dev, tx_addr, .addr = {0xE7, 0xE7, 0xE7, 0xE7, 0xE7}); // @PoR
+    nRF24L01_CFG(
+        dev, setup_retr,
+        .ARC = 0,
+        .ARD = 0);
+
+    /* channel 1 */
+    nRF24L01_CFG(
+        dev, rf_ch,
+        .RF_CH = 1);
+
+    /* 0dBm, 1Mbps */
+    nRF24L01_CFG(
+        dev, rf_setup,
+        .RF_PWR = 3,
+        .RF_DR_HIGH = 0,
+        .PLL_LOCK = 0,
+        .RF_DR_LOW = 0,
+        .CONT_WAVE = 0);
+
+    nRF24L01_CFG(dev, rx_addr_p0, .addr = {0xE7, 0xE7, 0xE7, 0xE7, 0xE7});
+    nRF24L01_CFG(dev, rx_addr_p1, .addr = {0xC2, 0xC2, 0xC2, 0xC2, 0xC2});
+    nRF24L01_CFG(dev, rx_addr_p2, .addr = 0xC3);
+    nRF24L01_CFG(dev, rx_addr_p3, .addr = 0xC4);
+    nRF24L01_CFG(dev, rx_addr_p4, .addr = 0xC5);
+    nRF24L01_CFG(dev, rx_addr_p5, .addr = 0xC6);
+    nRF24L01_CFG(dev, tx_addr, .addr = {0xE7, 0xE7, 0xE7, 0xE7, 0xE7});
 }
 
 static
-void broadcast(uintptr_t);
+void send(uintptr_t);
 
 static
 void on_send_error(
@@ -117,31 +159,44 @@ void on_send_error(
     uintptr_t user_data)
 {
     if(!user_data) return;
-    //nRF24L01_t *dev = (nRF24L01_t *)user_data;
 
-    if(status.MAX_RT)
-    {
-        broadcast(user_data);
-    }
+    nRF24L01_t *dev = (nRF24L01_t *)user_data;
+
+    dev->ce_set((nRF24L01_ce_t){.CE = 0});
+    usart0_send_str("send_err\n");
 }
 
+uint16_t cntr;
+
 static
-void broadcast(uintptr_t user_data)
+void send(uintptr_t user_data)
 {
     if(!user_data) return;
 
     nRF24L01_t *dev = (nRF24L01_t *)user_data;
-    const char *message = "hello from nRF24L01\r\n";
 
-    //usart0_send_str("broadcast\r\n");
+    char msg[32];
+
+    snprintf(msg, sizeof(msg), "hello %" PRIx16 "\n", cntr++);
+
+    dev->ce_set((nRF24L01_ce_t){.CE = 0});
+
     nRF24L01_send(
         dev,
-        (const uint8_t *)message, (const uint8_t *)(message + 21),
-        broadcast,
+        (const uint8_t *)msg, (const uint8_t *)(msg + strlen(msg)),
+        NULL,
         on_send_error,
         user_data);
 }
 
+static
+void cyclic_tmr_cb(uintptr_t user_data)
+{
+    if(!user_data) return;
+
+    nRF24L01_t *dev = (nRF24L01_t *)user_data;
+    send(user_data);
+}
 
 __attribute__((noreturn))
 void main(void)
@@ -160,20 +215,21 @@ void main(void)
     init(&dev);
     /* set SMCR SE (Sleep Enable bit) */
     sleep_enable();
-
-    broadcast((uintptr_t)&dev);
+    usart0_send_str("nRF24L01 TRANSMITTER\n");
+    cyclic_tmr_start(UINT16_C(0xFFFF), cyclic_tmr_cb, (uintptr_t)&dev);
 
     for(;;)
     {
         cli();
         {
-            usart0_send_str("loop\r\n");
+            usart0_send_str("+\n");
 
             /* TODO: do event dispatch once per main event loop
              * provide periodic timer, for now dispatch all events to avoid
              * missing some */
             while(0 == (PINC & M1(PINC2)))
             {
+                usart0_send_str("*\n");
                 dev.updated = 1;
                 nRF24L01_event(&dev);
             }

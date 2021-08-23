@@ -6,15 +6,17 @@ CPPFLAGS += -I$(DRV_DIR)
 
 include $(DRV_DIR)/Makefile.defs
 
-TARGET = nRF24L01_test
+TARGET = nRF24L01_rx_test
 CSRCS = \
 		$(BOOTLOADER)/fixed.c \
 		$(DRV_DIR)/drv/spi0.c \
+		$(DRV_DIR)/drv/tmr1.c \
 		$(DRV_DIR)/drv/usart0.c \
-		$(DRV_DIR)/panic.c \
+		cyclic_timer.c \
 		nRF24L01.c \
 		nRF24L01_dbg.c \
-		nRF24L01_test.c
+		nRF24L01_rx_test.c \
+		panic.c
 
 LDFLAGS += \
 		   -Wl,-T ../bootloader/atmega328p.ld
